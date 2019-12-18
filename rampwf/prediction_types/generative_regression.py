@@ -42,7 +42,7 @@ def _combine(cls, predictions_list, index_list=None):
         curr_weights = []
         curr_types = []
         curr_params = []
-        for i in index_list:
+        for i in range(len(index_list)):
             curr_pred = predictions_list[index_list[i]].y_pred
             dim_sizes = curr_pred[:, curr_indicies[i]]
             selected = np.isfinite(dim_sizes)
@@ -55,7 +55,7 @@ def _combine(cls, predictions_list, index_list=None):
             combined_size += curr_size
 
             temp_weights = curr_pred[:, curr_indicies[i] + 1:
-                                        curr_indicies[i] + 1 + curr_size]
+                                     curr_indicies[i] + 1 + curr_size]
 
             temp_weights[~selected] = 0
 
@@ -112,6 +112,15 @@ def _combine(cls, predictions_list, index_list=None):
 
 def set_valid_in_train(self, predictions, test_is):
     """Set a cross-validation slice."""
+
+    # Blending can create arbitrary-length mixtures. Sometimes
+    # we need to extend the prediction array to accomodate this.
+    if predictions.y_pred.shape[1] > self.y_pred.shape[1]:
+        shape = (self.y_pred.shape[0], predictions.y_pred.shape[1])
+        y_pred = np.empty(shape, dtype=float)
+        y_pred.fill(np.nan)
+        y_pred[:, :self.y_pred.shape[1]] = self.y_pred
+        self.y_pred = y_pred
     self.y_pred[test_is, :predictions.y_pred.shape[1]] = predictions.y_pred
 
 
