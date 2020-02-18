@@ -141,13 +141,18 @@ class PerRestart(object):
     """We do K-fold CV, each time one of the episodes is test, the rest is
     training."""
 
+    def __init__(self, restart_name='restart'):
+        """cv_method should typically be rw.cvs.TimeSeries().get_cv"""
+        self.restart_name = restart_name
+
     def get_cv(self, X, y):
         X_df = X.to_dataframe()
-        episode_bounds = list(np.where(X_df['restart'])[0])
-        episode_bounds.insert(0, 0)
+        episode_bounds = list(np.where(X_df[self.restart_name])[0])
+        if len(episode_bounds) == 0 or episode_bounds[0] != 0:
+            episode_bounds.insert(0, 0)
         episode_bounds.append(len(y))
         print('restarts: {}'.format(episode_bounds))
-        n_episodes = X_df['restart'].sum() + 1  # The number of episodes
+        n_episodes = len(episode_bounds) - 1  # The number of episodes
         k_fold = KFold(n_splits=n_episodes, shuffle=False)
         for fold_i, (train_idx, test_idx) in enumerate(k_fold.split(
                 np.arange(n_episodes))):
