@@ -1,6 +1,7 @@
 import numpy as np
 from abc import ABC, abstractmethod
-from scipy.special import gamma
+from scipy.special import gamma, iv
+from scipy.stats import truncnorm, norm, foldnorm, vonmises, beta
 
 # The maximum numbers of parameters a distribution would need
 MAX_PARAMS = 5
@@ -9,6 +10,7 @@ MAX_PARAMS = 5
 class AbstractDists(ABC):
     nb_params = np.nan
     id = np.nan
+    discrete = False
     params = None
 
     @staticmethod
@@ -96,7 +98,7 @@ class Uniform(AbstractDists):
 
     @staticmethod
     def sample(params):
-        return np.random.normal(params[0], params[1])
+        return np.random.uniform(params[0], params[1])
 
     @staticmethod
     def mu(params):
@@ -123,21 +125,26 @@ class Beta(AbstractDists):
         loc = params[:, 2]
         scale = params[:, 3]
         y = (x - loc) / scale
-        Beta.assert_params(x, params)
+        Beta.assert_params(params)
         probs = (gamma(a + b) * y ** (a - 1) * (1 - y) ** (b - 1)) / \
-                    (gamma(a) * gamma(b) * scale)
+                (gamma(a) * gamma(b) * scale)
+
+        probs = np.array(np.real(probs), dtype='float64')
+        probs[x < loc] = 0
+        probs[x > loc + scale] = 0
         return probs
 
     @staticmethod
-    def assert_params(x, params):
+    def assert_params(params):
         a = params[:, 0]
         b = params[:, 1]
-        loc = params[:, 2]
+        # loc = params[:, 2]
         scale = params[:, 3]
         assert np.all(a > 0), "Make sure all \"a\" > 0"
         assert np.all(b > 0), "Make sure all \"b\" > 0"
-        assert np.all(x > loc), "Make sure all \"x\" > \"loc\""
-        assert np.all(x < loc + scale), "Make sure all \"x\" < \"loc\"+\"scale\""
+        assert np.all(scale > 0), "Make sure all \"scale\" > 0"
+        # assert np.all(x >= loc), "Make sure all \"x\" > \"loc\""
+        # assert np.all(x <= loc + scale), "Make sure all \"x\" < \"loc\"+\"scale\""
 
     @staticmethod
     def sample(params):
@@ -163,6 +170,236 @@ class Beta(AbstractDists):
         scale = params[:, 3]
         var = a * b / ((a + b) ** 2 * (a + b + 1))
         return var * scale ** 2
+
+
+class NormalTruncated(AbstractDists):
+    nb_params = 4
+    id = 3
+    params = ['mean', 'sd', 'a', 'b']
+
+    @staticmethod
+    def pdf(x, params):
+        mean = params[:, 0]
+        sd = params[:, 1]
+        a = params[:, 2]
+        b = params[:, 3]
+        NormalTruncated.assert_params(params)
+        return truncnorm.pdf(x, a, b, mean, sd)
+
+    @staticmethod
+    def assert_params(params):
+        Normal.assert_params(params[:, :2])
+        Uniform.assert_params(params[:, 2:])
+
+    @staticmethod
+    def sample(params):
+        mean = params[:, 0]
+        sd = params[:, 1]
+        a = params[:, 2]
+        b = params[:, 3]
+        return truncnorm.rvs(a, b, mean, sd)
+
+    @staticmethod
+    def mu(params):
+        mean = params[:, 0]
+        sd = params[:, 1]
+        a = params[:, 2]
+        b = params[:, 3]
+        alpha = (a - mean) / sd
+        beta = (b - mean) / sd
+        return mean + sd * ((norm.pdf(alpha) - norm.pdf(beta))
+                            / (norm.cdf(beta) - norm.cdf(alpha)))
+
+    @staticmethod
+    def var(params):
+        mean = params[:, 0]
+        sd = params[:, 1]
+        a = params[:, 2]
+        b = params[:, 3]
+        alpha = (a - mean) / sd
+        beta = (b - mean) / sd
+        z = norm.cdf(beta) - norm.cdf(alpha)
+
+        return (sd ** 2) * (1 +
+                            ((alpha * norm.pdf(alpha) - beta * norm.pdf(beta)) / z) +
+                            ((norm.pdf(alpha) - norm.pdf(beta)) / z) ** 2
+                            )
+
+
+class NormalFolded(AbstractDists):
+    nb_params = 3
+    id = 4
+    params = ['c', 'loc', 'scale']
+
+    @staticmethod
+    def pdf(x, params):
+        c = params[:, 0]
+        loc = params[:, 1]
+        scale = params[:, 2]
+        NormalFolded.assert_params(params)
+        return foldnorm.pdf(x, c, loc, scale)
+
+    @staticmethod
+    def assert_params(params):
+        c = params[:, 0]
+        assert np.all(c >= 0), "Make sure all \"c\" > 0"
+        Normal.assert_params(params[:, 1:])
+
+    @staticmethod
+    def sample(params):
+        c = params[:, 0]
+        loc = params[:, 1]
+        scale = params[:, 2]
+        return foldnorm.rvs(c, loc, scale)
+
+    @staticmethod
+    def mu(params):
+        raise NotImplementedError()
+
+    @staticmethod
+    def var(params):
+        raise NotImplementedError()
+
+
+class VonMises(AbstractDists):
+    nb_params = 3
+    id = 5
+    params = ['kappa', 'loc', 'scale']
+
+    @staticmethod
+    def pdf(x, params):
+        kappa = params[:, 0]
+        loc = params[:, 1]
+        scale = params[:, 2]
+        VonMises.assert_params(params)
+        probs = vonmises.pdf(x, kappa, loc, scale)
+
+        probs = np.array(probs)
+        probs[x < loc - np.pi * scale] = 0
+        probs[x > loc + np.pi * scale] = 0
+        return probs
+
+    @staticmethod
+    def assert_params(params):
+        kappa = params[:, 0]
+        loc = params[:, 1]
+        scale = params[:, 2]
+        assert np.all(kappa > 0), "Make sure all \"kappa\" > 0"
+        assert np.all(scale > 0), "Make sure all \"scale\" > 0"
+        # assert np.all(x >= loc-np.pi*scale), "Make sure all \"x\" >= \"loc-np.pi*scale\""
+        # assert np.all(x <= loc+np.pi*scale), "Make sure all \"x\" <= \"loc+np.pi*scale\""
+
+    @staticmethod
+    def sample(params):
+        kappa = params[:, 0]
+        loc = params[:, 1]
+        scale = params[:, 2]
+        return vonmises.rvs(kappa, loc, scale)
+
+    @staticmethod
+    def mu(params):
+        return params[:, 1]
+
+    @staticmethod
+    def var(params):
+        raise NotImplementedError()
+
+
+class Pert(AbstractDists):
+    nb_params = 4
+    id = 6
+    params = ['a', 'b', 'c', 'lamb']
+
+    @staticmethod
+    def pdf(x, params):
+        a = params[:, 0]
+        b = params[:, 1]
+        c = params[:, 2]
+        lamb = params[:, 3]
+        Pert.assert_params(params)
+
+        size = c - a
+        alphas = 1 + (lamb * ((b - a) / size))
+        betas = 1 + (lamb * ((c - b) / size))
+        x_trans = ((x - a) / size)
+
+        probs = beta.pdf(x_trans, alphas, betas) / size
+        probs = np.array(probs)
+        probs[x < a] = 0
+        probs[x > c] = 0
+        return probs
+
+    @staticmethod
+    def assert_params(params):
+        a = params[:, 0]
+        b = params[:, 1]
+        c = params[:, 2]
+        lamb = params[:, 3]
+        assert np.all(b > a), "Make sure all \"b\" > \"a\""
+        assert np.all(c > b), "Make sure all \"c\" > \"b\""
+        assert np.all(lamb > 0), "Make sure all \"lambda\" > 0"
+
+    @staticmethod
+    def sample(params):
+        a = params[:, 0]
+        b = params[:, 1]
+        c = params[:, 2]
+        lamb = params[:, 3]
+
+        size = c - a
+        alphas = 1 + lamb * (b - a) / size
+        betas = 1 + lamb * (c - b) / size
+        sampled = beta.rvs(alphas, betas) * size + a
+        return sampled
+
+    @staticmethod
+    def mu(params):
+        raise NotImplementedError()
+
+    @staticmethod
+    def var(params):
+        raise NotImplementedError()
+
+
+# https://en.wikipedia.org/wiki/Gaussian_function#Discrete_Gaussian
+class NormalDiscrete(AbstractDists):
+    nb_params = 2
+    id = 7
+    discrete = True
+    params = ['loc', 'scale']
+
+    @staticmethod
+    def pdf(x, params):
+        loc = params[:, 0]
+        scale = params[:, 1]
+        NormalDiscrete.assert_params(params)
+        probs = np.exp(-scale) * iv((x - loc), scale)
+        probs[~np.equal(np.mod(x, 1), 0)] = 0
+        return probs
+
+    @staticmethod
+    def assert_params(params):
+        sd = params[:, 1]
+        assert np.all(sd >= 0), "Make sure all sigmas are positive " \
+                                "(second parameter)"
+
+
+    @staticmethod
+    def sample(params):
+        # For sampling, how much do we look right and left of the mean
+        tail = 5
+        xmin = params[0] - (tail * params[1])
+        xmax = params[0] - (tail * params[1])
+        sampled = rejection_sampling(NormalDiscrete.pdf, params, xmin, xmax, discrete=True)
+        return int(np.random.normal(params[0], params[1]))
+
+    @staticmethod
+    def mu(params):
+        return params[:, 0]
+
+    @staticmethod
+    def var(params):
+        return params[:, 1] ** 2
 
 
 class EmptyDist(AbstractDists):
@@ -192,8 +429,30 @@ class EmptyDist(AbstractDists):
 
 
 distributions_dict = {
-        cls.id: cls for cls in AbstractDists.__subclasses__()
-    }
+    cls.id: cls for cls in AbstractDists.__subclasses__()
+}
+
+
+# Bevington page 84. http://hosting.astro.cornell.edu/academics/courses/astro3310/Books/Bevington_opt.pdf
+def rejection_sampling(pdf, params, xmin=0, xmax=1, discrete=False, nb_attemps=1000):
+    if discrete:
+        x = np.arange(xmin, xmax)
+        x_sampler = np.random.randint
+    else:
+        x = np.linspace(xmin, xmax, nb_attemps)
+        x_sampler = np.random.uniform
+    y = pdf(x, params)
+    pmin = 0.
+    pmax = np.max(y)
+    i = 0
+    while i < nb_attemps:
+        i += 1
+        x = x_sampler(xmin, xmax)
+        y = np.random.uniform(pmin, pmax)
+
+        if y < pdf(x, params):
+            return x
+    return np.nan
 
 
 def distributions_dispatcher(d_type=-1):

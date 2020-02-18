@@ -78,7 +78,7 @@ class TimeSeries(object):
 
 
 def fold_to_str(idxs):
-    """Printing corss validation folds."""
+    """Printing cross validation folds."""
     idx_array = np.array(idxs)
     boundaries = np.array((idx_array[1:] - 1 != idx_array[:-1]).nonzero())
     boundaries = np.insert(boundaries, 0, -1)
@@ -93,20 +93,22 @@ class InsideRestart(object):
     """We do CV inside each of the episodes defined by restart and
     concatenate the episodes in both train an test."""
 
-    def __init__(self, cv_method=None):
+    def __init__(self, cv_method=None, restart_name='restart'):
         """cv_method should typically be rw.cvs.TimeSeries().get_cv"""
         self.cv_method = cv_method
         if self.cv_method is None:
             self.cv_method = KFold(
                 n_splits=3, random_state=None, shuffle=False).split
+        self.restart_name = restart_name
 
     def get_cv(self, X, y):
         X_df = X.to_dataframe()
-        episode_bounds = list(np.where(X_df['restart'])[0])
-        episode_bounds.insert(0, 0)
+        episode_bounds = list(np.where(X_df[self.restart_name])[0])
+        if len(episode_bounds) == 0 or episode_bounds[0] != 0:
+            episode_bounds.insert(0, 0)
         episode_bounds.append(len(y))
-        print('restarts: {}'.format(episode_bounds))
-        n_episodes = X_df['restart'].sum()  # The number of episodes
+        print('episode bounds: {}'.format(episode_bounds))
+        n_episodes = len(episode_bounds) - 1  # The number of episodes
         episode_list = []
         ranges = []
         for episode_id in range(n_episodes + 1):
@@ -122,16 +124,16 @@ class InsideRestart(object):
             train_is = []
             test_is = []
             if fold_i > 0:
-                X['restart'][train_idx[0]] = 0
-                X['restart'][test_idx[0]] = 0
+                X[self.restart_name][train_idx[0]] = 0
+                X[self.restart_name][test_idx[0]] = 0
             for episode, curr_range in zip(episode_list, ranges):
                 train_idx, test_idx = next(episode)
                 train_idx = curr_range[train_idx]
                 test_idx = curr_range[test_idx]
                 train_is += list(train_idx)
                 test_is += list(test_idx)
-                X['restart'][train_idx[0]] = 1
-                X['restart'][test_idx[0]] = 1
+                X[self.restart_name][train_idx[0]] = 1
+                X[self.restart_name][test_idx[0]] = 1
             print('CV fold {}: train {} valid {}'.format(
                 fold_i, fold_to_str(train_is), fold_to_str(test_is)))
             yield (train_is, test_is)
@@ -151,7 +153,7 @@ class PerRestart(object):
         if len(episode_bounds) == 0 or episode_bounds[0] != 0:
             episode_bounds.insert(0, 0)
         episode_bounds.append(len(y))
-        print('restarts: {}'.format(episode_bounds))
+        print('episode bounds: {}'.format(episode_bounds))
         n_episodes = len(episode_bounds) - 1  # The number of episodes
         k_fold = KFold(n_splits=n_episodes, shuffle=False)
         for fold_i, (train_idx, test_idx) in enumerate(k_fold.split(
